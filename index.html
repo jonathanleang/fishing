@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>香港釣魚潮汐｜HKO實時潮汐+氣壓月相</title>
+<style>
+*{box-sizing:border-box;font-family:system-ui, sans-serif;margin:0;padding:0}
+body{background:#111;color:#eee;padding:16px;max-width:620px;margin:0 auto}
+.card{background:#222;border-radius:14px;padding:16px;margin-bottom:12px}
+h2{margin:0 0 10px;font-size:22px}
+.tide-row{padding:10px;border-radius:8px;margin:6px 0}
+.tide-in{background:#006622;color:#9f9} /* 漲潮右口：綠色 */
+.tide-out{background:#661111;color:#f99} /* 退潮：紅色 */
+.moon{font-size:48px;text-align:center;margin:8px 0}
+.fish-note{padding:12px;border-radius:10px;background:#23395d;border:1px solid #668}
+.pressure-box{padding:12px;border-radius:10px;background:#353;border:1px solid #6a6;margin-bottom:10px}
+select{width:100%;padding:10px;font-size:16px;border-radius:8px;margin-bottom:10px}
+.loading{color:#aaa;text-align:center;padding:10px}
+</style>
+</head>
+<body>
+<h2>🎣 香港釣魚潮汐表（天文台數據）</h2>
+<select id="spot">
+<option value="CCH">長洲 CCH</option>
+<option value="TBT">尖鼻咀 TBT</option>
+<option value="TMW">大廟灣 TMW</option>
+<option value="QUB">鰂魚涌 QUB</option>
+</select>
+
+<div class="card">
+  <div id="moonBox"></div>
+  <div id="fishTip"></div>
+</div>
+
+<div class="card">
+  <h3>🌡️ 實時氣壓</h3>
+  <div id="pressureBox" class="loading">載入氣壓資料...</div>
+</div>
+
+<div class="card">
+  <h3>🌊 今日潮汐</h3>
+  <div id="tideList" class="loading">載入天文台潮汐...</div>
+</div>
+
+<script>
+// ========== 月相計算函數 ==========
+function getMoonPhase(date){
+  const knownNewMoon = new Date('1970-01-07T20:35:00Z');
+  const lunarCycle = 2551443000; // 29.53059日
+  const diff = date.getTime() - knownNewMoon.getTime();
+  const phase = (diff % lunarCycle)/lunarCycle;
+  let emoji, name;
+  if(phase<0.05 || phase>0.95){emoji="🌚";name="新月（幾乎無月光）"}
+  else if(phase<0.25){emoji="🌒";name="娥眉月"}
+  else if(phase<0.30){emoji="🌓";name="上弦月"}
+  else if(phase<0.48){emoji="🌔";name="盈凸月"}
+  else if(phase<0.52){emoji="🌕";name="滿月（月光強）"}
+  else if(phase<0.70){emoji="🌖";name="虧凸月"}
+  else if(phase<0.75){emoji="🌗";name="下弦月"}
+  else {emoji="🌘";name="殘月"}
+  return {emoji,name};
+}
+
+// ========== 氣壓提示（專為淺水石灘魚） ==========
+function getPressureTip(hpa){
+  if(hpa >= 1008 && hpa <=1013){
+    return `✅ 氣壓 ${hpa} hPa｜黃金範圍！淺水溶氧充足，火點、泥猛好活躍，適合淺灘作釣`;
+  }else if(hpa>1013 && hpa <=1020){
+    return `⚠️ 氣壓 ${hpa} hPa｜氣壓偏高，魚多匿石底，咬口減慢，建議貼底慢釣`;
+  }else if(hpa <1008){
+    return `❌ 氣壓 ${hpa} hPa｜偏低，淺水缺氧，魚唔願上淺灘，淺灘魚口差`;
+  }else{
+    return `ℹ️ 氣壓 ${hpa} hPa｜正常，觀察潮水同風向`;
+  }
+}
+
+// ========== 讀天文台API：實時天氣(氣壓) ==========
+async function loadPressure(){
+  try{
+    const res = await fetch(`https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc`);
+    const data = await res.json();
+    const pressure = data.pressure[0].value;
+    document.getElementById("pressureBox").innerHTML = `<div class="pressure-box">${getPressureTip(pressure)}</div>`;
+  }catch(e){
+    document.getElementById("pressureBox").innerText = "⚠️ 氣壓載入失敗（CORS限制，上網站Host先可以手機正常讀取）";
+  }
+}
+
+// ========== 讀天文台潮汐 HLT API ==========
+async function loadTide(stationCode){
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth()+1;
+  try{
+    const url = `https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=HLT&station=${stationCode}&year=${y}&rformat=json`;
+    const res = await fetch(url);
+    const raw = await res.json();
+    let html = "";
+    raw.forEach(t=>{
+      const isHigh = t.type === "High Water";
+      const cls = isHigh ? "tide-row tide-in" : "tide-row tide-out";
+      const label = isHigh ? "🔼 漲潮（右口）" : "🔽 退潮";
+      html += `<div class="${cls}">${label}｜${t.time}｜潮高 ${t.height} m</div>`
+    })
+    document.getElementById("tideList").innerHTML = html;
+  }catch(e){
+    document.getElementById("tideList").innerText = "⚠️ 潮汐載入失敗，CORS限制，Github Pages上載即可解決";
+  }
+}
+
+// ========== 渲染月相同提示 ==========
+function renderMoonTip(){
+  const today = new Date();
+  const moon = getMoonPhase(today);
+  document.getElementById("moonBox").innerHTML = `
+  <div class="moon">${moon.emoji}</div>
+  <div style="text-align:center;font-size:18px">${moon.name}</div>
+  `;
+  let tipText = "";
+  if(moon.name.includes("滿月")){
+    tipText = "🌕 滿月：夜晚月光足，**日間淺灘魚口一般較差，優先考慮夜釣**";
+  }else if(moon.name.includes("新月")){
+    tipText = "🌚 新月：夜晚幾乎冇月光，**日間淺灘魚口會好啲，日釣首選**";
+  }else{
+    tipText = "ℹ️ 月相普通，魚口睇潮汐同氣壓；綠色漲潮段最值得落竿";
+  }
+  document.getElementById("fishTip").innerHTML = `<div class="fish-note">${tipText}</div>`;
+}
+
+// ========== 主入口 ==========
+async function main(){
+  renderMoonTip();
+  const spot = document.getElementById('spot').value;
+  await loadTide(spot);
+  await loadPressure();
+}
+
+document.getElementById("spot").onchange = main;
+main();
+</script>
+</body>
+</html>
