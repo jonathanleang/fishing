@@ -77,6 +77,18 @@ select{width:100%;padding:10px;font-size:16px;border-radius:8px;margin-bottom:10
 .tide-up{color:#9f9}
 .tide-down{color:#f99}
 .source-note{color:#777;font-size:11px;text-align:center;padding:4px 0 8px}
+.window-stars{font-size:16px;color:#ffd54a;letter-spacing:1px;margin-top:2px}
+.stars{color:#ffd54a;letter-spacing:1px}
+.act-day{background:#2b2b2b;border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.act-day:last-child{margin-bottom:0}
+.act-day-title{font-weight:700;font-size:14px;margin-bottom:6px}
+.act-row{font-size:14px;line-height:1.5;padding:4px 0;border-top:1px solid #333}
+.act-row:first-of-type{border-top:none}
+.act-detail{font-size:12px;color:#aaa;line-height:1.5}
+.act-ok{color:#9f9}
+.act-caution{color:#ffb454}
+.act-no{color:#ff8a8a}
+.day-act{font-size:13px;line-height:1.55;margin-top:5px;color:#ccc}
 </style>
 </head>
 <body>
@@ -107,7 +119,13 @@ select{width:100%;padding:10px;font-size:16px;border-radius:8px;margin-bottom:10
   <div class="legend">
     <span class="best">最佳</span><span class="good">好</span><span class="fair">一般</span><span class="poor">差</span>
   </div>
-  <div class="data-note">評分綜合潮汐流速、漲退、風力、陣風、雨量、氣壓、浪高及晨昏時段。</div>
+  <div class="data-note">評分綜合潮汐流速、漲退、風力、陣風、雨量、氣壓、浪高及晨昏時段。星數按平均分計，時段完全喺 09:00–17:00 之內會加多粒星 ☀️，並優先排前。</div>
+</div>
+
+<div class="card">
+  <h3>🛶 獨木舟／🚤 出海</h3>
+  <div id="activityBox" class="loading">評估風浪中...</div>
+  <div class="data-note">只計日間 07:00–18:00。獨木舟：風 ≤15、陣風 ≤25 km/h、浪 ≤0.5 m 為適合；風 ≤20、陣風 ≤32、浪 ≤1 m 為小心。出海（小艇）：風 ≤20、陣風 ≤35、浪 ≤1 m 為適合；風 ≤30、陣風 ≤45、浪 ≤1.5 m 為小心。有雷暴一律唔適合。出發前請再睇天文台警告。</div>
 </div>
 
 <div class="card">
@@ -529,15 +547,19 @@ function findWindows(points, threshold = 62){
   const size = Math.min(3, points.length);
   const candidates = [];
 
-  for(let i = 0; i + size <= points.length; i++){
+  const makeWindow = (i, fallback) => {
     const block = points.slice(i, i + size);
     const avg = Math.round(block.reduce((sum, p) => sum + p.score, 0) / block.length);
-    if(avg >= threshold){
-      candidates.push({ points: block, avg, start: i, end: i + size - 1, fallback: false });
-    }
+    const prime = isPrimeDaytime(block);
+    return { points: block, avg, prime, stars: windowStars(avg, prime), start: i, end: i + size - 1, fallback };
+  };
+
+  for(let i = 0; i + size <= points.length; i++){
+    const window = makeWindow(i, false);
+    if(window.avg >= threshold) candidates.push(window);
   }
 
-  candidates.sort((a, b) => b.avg - a.avg || b.points.length - a.points.length);
+  candidates.sort((a, b) => b.stars - a.stars || b.avg - a.avg);
   const selected = [];
   for(const candidate of candidates){
     if(selected.length >= 3) break;
@@ -549,9 +571,8 @@ function findWindows(points, threshold = 62){
 
   let best = null;
   for(let i = 0; i + size <= points.length; i++){
-    const block = points.slice(i, i + size);
-    const avg = Math.round(block.reduce((sum, p) => sum + p.score, 0) / block.length);
-    if(!best || avg > best.avg) best = { points: block, avg, fallback: true };
+    const window = makeWindow(i, true);
+    if(!best || window.stars > best.stars || (window.stars === best.stars && window.avg > best.avg)) best = window;
   }
   return best ? [best] : [];
 }
@@ -606,6 +627,155 @@ function formatWindowLabel(window, includeDate){
   const startLabel = includeDate ? `${startMD} ${startTime}` : startTime;
   const endLabel = end.dateKey !== start.dateKey ? `${end.monthDay} ${end.time}` : end.time;
   return `${startLabel}–${endLabel}`;
+}
+
+function groupByDate(points){
+  const byDate = new Map();
+  points.forEach(point => {
+    if(!byDate.has(point.dateKey)) byDate.set(point.dateKey, []);
+    byDate.get(point.dateKey).push(point);
+  });
+  return byDate;
+}
+
+// ========== 星數 ==========
+const PRIME_HOURS = { start: 9, end: 17 };
+
+function isPrimeDaytime(points){
+  return points.every(p => p.hour >= PRIME_HOURS.start && p.hour + 1 <= PRIME_HOURS.end);
+}
+
+function windowStars(avg, prime){
+  const base = avg >= 78 ? 4 : avg >= 62 ? 3 : avg >= 45 ? 2 : 1;
+  return Math.min(5, base + (prime ? 1 : 0));
+}
+
+function starText(count){
+  return "★".repeat(count) + "☆".repeat(5 - count);
+}
+
+// ========== 獨木舟／出海 ==========
+const ACTIVITY_HOURS = { start: 7, end: 18 };
+
+const ACTIVITY_LEVELS = {
+  ok: { label: "適合", icon: "✅", rank: 0 },
+  caution: { label: "小心", icon: "⚠️", rank: 1 },
+  no: { label: "唔適合", icon: "❌", rank: 2 }
+};
+
+const ACTIVITY_RULES = [
+  {
+    key: "kayak", name: "獨木舟", emoji: "🛶",
+    ok: { wind: 15, gust: 25, wave: 0.5 },
+    caution: { wind: 20, gust: 32, wave: 1.0 }
+  },
+  {
+    key: "boat", name: "出海", emoji: "🚤",
+    ok: { wind: 20, gust: 35, wave: 1.0 },
+    caution: { wind: 30, gust: 45, wave: 1.5 }
+  }
+];
+
+function activityLevel(point, rule){
+  if(point.wind == null) return null;
+  if(point.code != null && point.code >= 95) return "no";
+  const within = limits => ["wind", "gust", "wave"].every(key => point[key] == null || point[key] <= limits[key]);
+  if(within(rule.ok)) return point.rainProb != null && point.rainProb > 60 ? "caution" : "ok";
+  if(within(rule.caution)) return "caution";
+  return "no";
+}
+
+function hourRanges(hours, accept){
+  const ranges = [];
+  let start = null;
+  hours.forEach((entry, i) => {
+    const prev = hours[i - 1];
+    const contiguous = prev && entry.point.hour === prev.point.hour + 1;
+    if(accept(entry.level)){
+      if(start == null || !contiguous) start = entry.point.hour;
+      const next = hours[i + 1];
+      const nextAccepted = next && accept(next.level) && next.point.hour === entry.point.hour + 1;
+      if(!nextAccepted){
+        ranges.push({ start, end: entry.point.hour + 1 });
+        start = null;
+      }
+    }
+  });
+  return ranges;
+}
+
+function formatRanges(ranges){
+  return ranges.map(r => `${String(r.start).padStart(2, "0")}:00–${String(r.end).padStart(2, "0")}:00`).join("、");
+}
+
+function assessActivityDay(dayPoints, rule){
+  const hours = dayPoints
+    .filter(p => p.hour >= ACTIVITY_HOURS.start && p.hour < ACTIVITY_HOURS.end)
+    .map(point => ({ point, level: activityLevel(point, rule) }))
+    .filter(entry => entry.level);
+  if(!hours.length) return null;
+
+  const minRun = Math.min(3, hours.length);
+  const longest = ranges => ranges.reduce((max, r) => Math.max(max, r.end - r.start), 0);
+  const okRanges = hourRanges(hours, level => level === "ok");
+  const usableRanges = hourRanges(hours, level => level !== "no");
+
+  let level, ranges;
+  if(longest(okRanges) >= minRun){
+    level = "ok";
+    ranges = okRanges.filter(r => r.end - r.start >= minRun);
+  }else if(longest(usableRanges) >= minRun){
+    level = "caution";
+    ranges = usableRanges.filter(r => r.end - r.start >= minRun);
+  }else{
+    level = "no";
+    ranges = [];
+  }
+
+  const maxOf = key => {
+    const values = hours.map(e => e.point[key]).filter(v => v != null);
+    return values.length ? Math.max(...values) : null;
+  };
+  const max = { wind: maxOf("wind"), gust: maxOf("gust"), wave: maxOf("wave"), rainProb: maxOf("rainProb") };
+
+  const issues = [];
+  if(hours.some(e => e.point.code != null && e.point.code >= 95)) issues.push("有雷暴");
+  if(max.wind != null && max.wind > rule.ok.wind) issues.push(`風最高 ${max.wind.toFixed(0)} km/h`);
+  if(max.gust != null && max.gust > rule.ok.gust) issues.push(`陣風最高 ${max.gust.toFixed(0)} km/h`);
+  if(max.wave != null && max.wave > rule.ok.wave) issues.push(`浪最高 ${max.wave.toFixed(1)} m`);
+  if(max.rainProb != null && max.rainProb > 60) issues.push(`雨機會 ${max.rainProb.toFixed(0)}%`);
+
+  return { level, ranges, max, issues };
+}
+
+function activityRow(rule, assessment){
+  if(!assessment){
+    return `<div class="act-row">${rule.emoji} ${rule.name}：<span class="act-detail">日間時段已過／暫無資料</span></div>`;
+  }
+  const lv = ACTIVITY_LEVELS[assessment.level];
+  const rangeText = assessment.ranges.length ? `｜${formatRanges(assessment.ranges)}` : "";
+  const m = assessment.max;
+  const facts = [
+    m.wind != null ? `風 ${m.wind.toFixed(0)} km/h（${beaufort(m.wind)}級）` : null,
+    m.gust != null ? `陣風 ${m.gust.toFixed(0)} km/h` : null,
+    m.wave != null ? `浪 ${m.wave.toFixed(1)} m` : null
+  ].filter(Boolean).join("｜");
+  const note = assessment.level === "ok" && !assessment.issues.length
+    ? "風平浪靜"
+    : assessment.issues.length ? `留意：${assessment.issues.join("、")}` : "";
+  return `<div class="act-row">
+    ${rule.emoji} ${rule.name}：<b class="act-${assessment.level}">${lv.icon} ${lv.label}</b>${rangeText}
+    <div class="act-detail">日間最高：${facts || "—"}${note ? `<br>${note}` : ""}</div>
+  </div>`;
+}
+
+function activityCompact(rule, assessment){
+  if(!assessment) return `${rule.emoji} ${rule.name} —`;
+  const lv = ACTIVITY_LEVELS[assessment.level];
+  const rangeText = assessment.level !== "no" && assessment.ranges.length && !assessment.ranges.some(r => r.end - r.start >= 9)
+    ? ` ${formatRanges(assessment.ranges.slice(0, 2))}`
+    : "";
+  return `${rule.emoji} ${rule.name} <span class="act-${assessment.level}">${lv.icon} ${lv.label}</span>${rangeText}`;
 }
 
 // ========== 渲染：即時環境 ==========
@@ -740,7 +910,8 @@ function render24HourPlan(points, hasTide, hasMarine){
     + windows.map(window => `
       <div class="window ${window.fallback ? "" : "best"}">
         <div class="window-time">${formatWindowLabel(window, true)}</div>
-        <div class="window-score">${window.fallback ? "相對較好" : "黃金時段"}｜平均 ${window.avg} 分</div>
+        <div class="window-stars">${starText(window.stars)}${window.prime ? " ☀️" : ""}</div>
+        <div class="window-score">${window.fallback ? "相對較好" : "黃金時段"}｜平均 ${window.avg} 分${window.prime ? "｜日間時段 +1★" : ""}</div>
         <div class="window-reason">${windowReasons(window.points)}</div>
       </div>
     `).join("");
@@ -754,16 +925,23 @@ function render24HourPlan(points, hasTide, hasMarine){
       ? "潮 —"
       : `${point.rising ? "漲" : "退"} ${point.tideHeight.toFixed(2)}m`;
     const windLabel = point.wind == null ? "風 —" : `風 ${point.wind.toFixed(0)}`;
+    const gustLabel = point.gust == null ? "陣風 —" : `陣風 ${point.gust.toFixed(0)}`;
     const rainLabel = point.rainProb == null ? "雨 —" : `雨 ${point.rainProb.toFixed(0)}%`;
     const waveLabel = point.wave == null ? "浪 —" : `浪 ${point.wave.toFixed(1)}m`;
-    const title = `${point.timeKey.replace("T", " ")}｜${point.score}分｜${tideLabel}｜${windLabel}｜${rainLabel}｜${waveLabel}`;
+    const activityLabel = ACTIVITY_RULES.map(rule => {
+      const level = activityLevel(point, rule);
+      return `${rule.emoji}${level ? ACTIVITY_LEVELS[level].icon : "—"}`;
+    }).join(" ");
+    const title = `${point.timeKey.replace("T", " ")}｜${point.score}分｜${tideLabel}｜${windLabel}｜${gustLabel}｜${rainLabel}｜${waveLabel}`;
     return `<div class="hour-card ${point.rating.cls}" title="${title}">
       <div class="hour-time">${timeLabel}</div>
       <div class="hour-score ${point.rating.cls}">${point.score}</div>
       <div class="hour-meta">${tideLabel}</div>
       <div class="hour-meta">${windLabel}</div>
+      <div class="hour-meta">${gustLabel}</div>
       <div class="hour-meta">${rainLabel}</div>
       <div class="hour-meta">${waveLabel}</div>
+      <div class="hour-meta">${activityLabel}</div>
     </div>`;
   }).join("");
 }
@@ -773,11 +951,7 @@ function renderWeeklyPlan(points, weather, marine, tideEvents, days, hasTide, ha
   const el = document.getElementById("weeklyList");
   const daily = weather.daily;
   const marineDaily = marine && marine.daily ? marine.daily : null;
-  const byDate = new Map();
-  points.forEach(point => {
-    if(!byDate.has(point.dateKey)) byDate.set(point.dateKey, []);
-    byDate.get(point.dateKey).push(point);
-  });
+  const byDate = groupByDate(points);
 
   const notes = [];
   if(!hasTide) notes.push("潮汐資料暫缺");
@@ -825,8 +999,11 @@ function renderWeeklyPlan(points, weather, marine, tideEvents, days, hasTide, ha
           }).join("｜")
         : "潮汐：暫無資料";
       const bestText = best
-        ? `${best.fallback ? "相對較好" : "最佳"} ${formatWindowLabel(best, false)}（${best.avg}分）｜${windowReasons(best.points)}`
+        ? `<span class="stars">${starText(best.stars)}</span>${best.prime ? " ☀️" : ""} ${best.fallback ? "相對較好" : "最佳"} ${formatWindowLabel(best, false)}（${best.avg}分）｜${windowReasons(best.points)}`
         : "暫無足夠數據";
+      const activityText = ACTIVITY_RULES
+        .map(rule => activityCompact(rule, assessActivityDay(dayPoints, rule)))
+        .join("｜");
 
       return `<div class="day-card">
         <div class="day-head">
@@ -836,7 +1013,26 @@ function renderWeeklyPlan(points, weather, marine, tideEvents, days, hasTide, ha
         <div class="day-line">${weatherLine}</div>
         <div class="day-line">${windLine}｜${waveLine}</div>
         <div class="day-tide">${tideLine}</div>
+        <div class="day-act">${activityText}</div>
         <div class="day-best">🎯 ${bestText}</div>
+      </div>`;
+    }).join("");
+}
+
+// ========== 渲染：獨木舟／出海 ==========
+function renderActivityPlan(points, days, hasMarine){
+  const el = document.getElementById("activityBox");
+  const byDate = groupByDate(points);
+  const labels = ["今日", "聽日"];
+
+  el.className = "";
+  el.innerHTML = (hasMarine ? "" : `<div class="data-note" style="margin-bottom:8px">⚠️ 海況資料暫缺，未計浪高</div>`)
+    + days.slice(0, 2).map((day, i) => {
+      const dayPoints = byDate.get(day.key) || [];
+      const dateLabel = `${labels[i]}（${Number(day.month)}月${Number(day.day)}日 週${WEEKDAYS[day.date.getUTCDay()]}）`;
+      return `<div class="act-day">
+        <div class="act-day-title">${dateLabel}</div>
+        ${ACTIVITY_RULES.map(rule => activityRow(rule, assessActivityDay(dayPoints, rule))).join("")}
       </div>`;
     }).join("");
 }
@@ -877,6 +1073,7 @@ async function loadDashboard(spotCode){
   const bestEl = document.getElementById("bestWindows");
   const chartEl = document.getElementById("hourlyChart");
   const weeklyEl = document.getElementById("weeklyList");
+  const activityEl = document.getElementById("activityBox");
   const tideList = document.getElementById("tideList");
   const tideTitle = document.getElementById("tideTitle");
 
@@ -890,6 +1087,8 @@ async function loadDashboard(spotCode){
   chartEl.textContent = "載入逐小時預測...";
   weeklyEl.className = "loading";
   weeklyEl.textContent = "載入七日預測...";
+  activityEl.className = "loading";
+  activityEl.textContent = "評估風浪中...";
   tideList.className = "loading";
   tideList.textContent = "載入天文台潮汐...";
   tideTitle.textContent = "🌊 今日潮汐";
@@ -933,6 +1132,7 @@ async function loadDashboard(spotCode){
     const futurePoints = allPoints.filter(point => point.timeKey >= nowKey);
     render24HourPlan(futurePoints.slice(0, 24), Boolean(tideEvents), Boolean(marine));
     renderWeeklyPlan(futurePoints, weather, marine, tideEvents || [], days, Boolean(tideEvents), Boolean(marine));
+    renderActivityPlan(futurePoints, days, Boolean(marine));
   }else{
     console.error("七日預測載入失敗:", weatherResult.reason);
     bestEl.className = "window-list";
@@ -941,6 +1141,8 @@ async function loadDashboard(spotCode){
     chartEl.innerHTML = `<div class="loading">⚠️ 逐小時資料載入失敗</div>`;
     weeklyEl.className = "loading";
     weeklyEl.textContent = "⚠️ 七日預測載入失敗，請稍後再試";
+    activityEl.className = "loading";
+    activityEl.textContent = "⚠️ 風浪資料載入失敗，請稍後再試";
   }
 }
 
