@@ -1008,7 +1008,7 @@ function renderWeeklyPlan(points, weather, marine, tideEvents, days, hasTide, ha
       return `<div class="day-card">
         <div class="day-head">
           <div class="day-date">${moon.emoji} ${dateLabel}</div>
-          <div class="day-badge ${rating ? rating.cls : "fair"}">${best ? `${rating.label} ${best.avg}` : "—"}</div>
+          <div class="day-badge ${rating ? rating.cls : "fair"}">${best ? `${rating.label} ${best.avg}${best.prime ? " 👍" : ""}` : "—"}</div>
         </div>
         <div class="day-line">${weatherLine}</div>
         <div class="day-line">${windLine}｜${waveLine}</div>
