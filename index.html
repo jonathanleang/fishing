@@ -142,10 +142,46 @@ const SPOTS = {
 };
 
 // ========== 共用工具 ==========
-async function fetchJson(url){
-  const res = await fetch(url);
-  if(!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+async function fetchJson(url, retries = 2){
+  let lastError;
+  for(let attempt = 0; attempt <= retries; attempt++){
+    try{
+      const res = await fetch(url);
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    }catch(e){
+      lastError = e;
+      if(attempt < retries) await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+function readCache(url){
+  try{
+    const raw = localStorage.getItem(`fishing-cache:${url}`);
+    if(!raw) return null;
+    const cached = JSON.parse(raw);
+    return cached && cached.value ? cached : null;
+  }catch(e){
+    return null;
+  }
+}
+
+async function fetchJsonCached(url, ttlMs, retries = 2){
+  const cached = readCache(url);
+  if(cached && Date.now() - cached.time < ttlMs) return cached.value;
+
+  try{
+    const value = await fetchJson(url, retries);
+    try{
+      localStorage.setItem(`fishing-cache:${url}`, JSON.stringify({ time: Date.now(), value }));
+    }catch(e){}
+    return value;
+  }catch(e){
+    if(cached) return cached.value;
+    throw e;
+  }
 }
 
 function getHKDateParts(date = new Date()){
@@ -374,7 +410,7 @@ function parseTideEvents(raw, year){
 async function loadTideEvents(stationCode, days){
   const years = [...new Set(days.map(d => d.year))];
   const responses = await Promise.allSettled(years.map(year =>
-    fetchJson(`${HKO_OPEN_API}?dataType=HLT&station=${stationCode}&year=${year}&rformat=json`)
+    fetchJsonCached(`${HKO_OPEN_API}?dataType=HLT&station=${stationCode}&year=${year}&rformat=json`, 6 * 60 * 60 * 1000)
   ));
   const events = [];
   responses.forEach((result, i) => {
@@ -870,8 +906,8 @@ async function loadDashboard(spotCode){
     + "&forecast_days=7&timezone=Asia%2FHong_Kong";
 
   const [weatherResult, marineResult, tideResult] = await Promise.allSettled([
-    fetchJson(weatherUrl),
-    fetchJson(marineUrl),
+    fetchJsonCached(weatherUrl, 10 * 60 * 1000),
+    fetchJsonCached(marineUrl, 10 * 60 * 1000),
     loadTideEvents(spotCode, days)
   ]);
 
@@ -915,8 +951,8 @@ async function loadSunMoon(){
   const iso = `${d.year}-${d.month}-${d.day}`;
   try{
     const [srs, mrs] = await Promise.all([
-      fetchJson(`${HKO_OPEN_API}?dataType=SRS&year=${d.year}&rformat=json`),
-      fetchJson(`${HKO_OPEN_API}?dataType=MRS&year=${d.year}&rformat=json`)
+      fetchJsonCached(`${HKO_OPEN_API}?dataType=SRS&year=${d.year}&rformat=json`, 12 * 60 * 60 * 1000),
+      fetchJsonCached(`${HKO_OPEN_API}?dataType=MRS&year=${d.year}&rformat=json`, 12 * 60 * 60 * 1000)
     ]);
     const sun = (srs.data || []).find(row => row[0] === iso);
     const moon = (mrs.data || []).find(row => row[0] === iso);
