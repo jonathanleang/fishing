@@ -3,15 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>香港釣魚潮汐｜HKO實時潮汐+氣壓月相</title>
+<title>香港釣魚潮汐｜HKO潮汐＋實時氣壓月相</title>
 <style>
 *{box-sizing:border-box;font-family:system-ui, sans-serif;margin:0;padding:0}
 body{background:#111;color:#eee;padding:16px;max-width:620px;margin:0 auto}
 .card{background:#222;border-radius:14px;padding:16px;margin-bottom:12px}
 h2{margin:0 0 10px;font-size:22px}
+h3{margin:0 0 10px;font-size:18px}
 .tide-row{padding:10px;border-radius:8px;margin:6px 0}
-.tide-in{background:#006622;color:#9f9} /* 漲潮右口：綠色 */
+.tide-in{background:#006622;color:#9f9} /* 漲潮：綠色 */
 .tide-out{background:#661111;color:#f99} /* 退潮：紅色 */
+.tide-unknown{background:#333;color:#ccc}
 .moon{font-size:48px;text-align:center;margin:8px 0}
 .fish-note{padding:12px;border-radius:10px;background:#23395d;border:1px solid #668}
 .pressure-box{padding:12px;border-radius:10px;background:#353;border:1px solid #6a6;margin-bottom:10px}
@@ -39,17 +41,32 @@ select{width:100%;padding:10px;font-size:16px;border-radius:8px;margin-bottom:10
 </div>
 
 <div class="card">
-  <h3>🌊 今日潮汐</h3>
+  <h3 id="tideTitle">🌊 今日潮汐</h3>
   <div id="tideList" class="loading">載入天文台潮汐...</div>
 </div>
 
 <script>
+const HKO_TIDE_API = "https://data.weather.gov.hk/weatherAPI/opendata/opendata.php";
+const PRESSURE_API = "https://api.open-meteo.com/v1/forecast?latitude=22.302&longitude=114.174&current=pressure_msl&timezone=Asia%2FHong_Kong";
+
+// ========== 香港時區日期 ==========
+function getHKDateParts(date = new Date()){
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const get = type => parts.find(p => p.type === type).value;
+  return { year: get("year"), month: get("month"), day: get("day") };
+}
+
 // ========== 月相計算函數 ==========
 function getMoonPhase(date){
-  const knownNewMoon = new Date('1970-01-07T20:35:00Z');
+  const knownNewMoon = new Date("1970-01-07T20:35:00Z");
   const lunarCycle = 2551443000; // 29.53059日
   const diff = date.getTime() - knownNewMoon.getTime();
-  const phase = (diff % lunarCycle)/lunarCycle;
+  const phase = ((diff % lunarCycle) + lunarCycle) % lunarCycle / lunarCycle;
   let emoji, name;
   if(phase<0.05 || phase>0.95){emoji="🌚";name="新月（幾乎無月光）"}
   else if(phase<0.25){emoji="🌒";name="娥眉月"}
@@ -64,48 +81,98 @@ function getMoonPhase(date){
 
 // ========== 氣壓提示（專為淺水石灘魚） ==========
 function getPressureTip(hpa){
+  const value = hpa.toFixed(1);
   if(hpa >= 1008 && hpa <=1013){
-    return `✅ 氣壓 ${hpa} hPa｜黃金範圍！淺水溶氧充足，火點、泥猛好活躍，適合淺灘作釣`;
+    return `✅ 氣壓 ${value} hPa｜黃金範圍！淺水溶氧充足，火點、泥猛好活躍，適合淺灘作釣`;
   }else if(hpa>1013 && hpa <=1020){
-    return `⚠️ 氣壓 ${hpa} hPa｜氣壓偏高，魚多匿石底，咬口減慢，建議貼底慢釣`;
+    return `⚠️ 氣壓 ${value} hPa｜氣壓偏高，魚多匿石底，咬口減慢，建議貼底慢釣`;
   }else if(hpa <1008){
-    return `❌ 氣壓 ${hpa} hPa｜偏低，淺水缺氧，魚唔願上淺灘，淺灘魚口差`;
+    return `❌ 氣壓 ${value} hPa｜偏低，淺水缺氧，魚唔願上淺灘，淺灘魚口差`;
   }else{
-    return `ℹ️ 氣壓 ${hpa} hPa｜正常，觀察潮水同風向`;
+    return `ℹ️ 氣壓 ${value} hPa｜正常，觀察潮水同風向`;
   }
 }
 
-// ========== 讀天文台API：實時天氣(氣壓) ==========
+// ========== 讀 Open-Meteo：實時氣壓（海平面氣壓） ==========
 async function loadPressure(){
+  const box = document.getElementById("pressureBox");
   try{
-    const res = await fetch(`https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc`);
+    const res = await fetch(PRESSURE_API);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const pressure = data.pressure[0].value;
-    document.getElementById("pressureBox").innerHTML = `<div class="pressure-box">${getPressureTip(pressure)}</div>`;
+    const pressure = data.current && data.current.pressure_msl;
+    if(typeof pressure !== "number") throw new Error("回應沒有氣壓數據");
+    box.innerHTML = `<div class="pressure-box">${getPressureTip(pressure)}</div>`;
   }catch(e){
-    document.getElementById("pressureBox").innerText = "⚠️ 氣壓載入失敗（CORS限制，上網站Host先可以手機正常讀取）";
+    console.error("氣壓載入失敗:", e);
+    box.textContent = "⚠️ 氣壓載入失敗，請稍後再試";
   }
+}
+
+// ========== 解析天文台潮汐 HLT 資料 ==========
+function parseTideDay(raw, dateParts){
+  if(!raw || !Array.isArray(raw.data)) throw new Error("潮汐資料格式有變");
+
+  const all = [];
+  raw.data.forEach(row => {
+    for(let i = 2; i + 1 < row.length; i += 2){
+      const time = row[i];
+      const height = row[i + 1];
+      if(time && height !== ""){
+        all.push({ month: row[0], day: row[1], time, height: Number(height) });
+      }
+    }
+  });
+
+  all.forEach((event, i) => {
+    if(i < all.length - 1){
+      event.type = all[i + 1].height > event.height ? "low" : "high";
+    }else if(i > 0){
+      event.type = event.height > all[i - 1].height ? "high" : "low";
+    }else{
+      event.type = "unknown";
+    }
+  });
+
+  return all.filter(event => event.month === dateParts.month && event.day === dateParts.day);
+}
+
+// ========== 渲染今日潮汐 ==========
+function renderTides(events, dateParts){
+  const title = document.getElementById("tideTitle");
+  const list = document.getElementById("tideList");
+  const dateLabel = `${Number(dateParts.month)}月${Number(dateParts.day)}日`;
+  title.textContent = `🌊 今日潮汐（${dateLabel}）`;
+
+  if(!events.length){
+    list.innerHTML = `<div class="loading">今日暫無潮汐資料</div>`;
+    return;
+  }
+
+  list.innerHTML = events.map(event => {
+    const isHigh = event.type === "high";
+    const cls = isHigh ? "tide-row tide-in" : event.type === "low" ? "tide-row tide-out" : "tide-row tide-unknown";
+    const label = isHigh ? "🔼 漲潮（右口）" : event.type === "low" ? "🔽 退潮" : "🌊 潮汐";
+    return `<div class="${cls}">${label}｜${event.time}｜潮高 ${event.height.toFixed(2)} m</div>`;
+  }).join("");
 }
 
 // ========== 讀天文台潮汐 HLT API ==========
 async function loadTide(stationCode){
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth()+1;
+  const list = document.getElementById("tideList");
+  list.className = "loading";
+  list.textContent = "載入天文台潮汐...";
+  const dateParts = getHKDateParts();
   try{
-    const url = `https://data.weather.gov.hk/weatherAPI/opendata/opendata.php?dataType=HLT&station=${stationCode}&year=${y}&rformat=json`;
+    const url = `${HKO_TIDE_API}?dataType=HLT&station=${stationCode}&year=${dateParts.year}&rformat=json`;
     const res = await fetch(url);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const raw = await res.json();
-    let html = "";
-    raw.forEach(t=>{
-      const isHigh = t.type === "High Water";
-      const cls = isHigh ? "tide-row tide-in" : "tide-row tide-out";
-      const label = isHigh ? "🔼 漲潮（右口）" : "🔽 退潮";
-      html += `<div class="${cls}">${label}｜${t.time}｜潮高 ${t.height} m</div>`
-    })
-    document.getElementById("tideList").innerHTML = html;
+    renderTides(parseTideDay(raw, dateParts), dateParts);
   }catch(e){
-    document.getElementById("tideList").innerText = "⚠️ 潮汐載入失敗，CORS限制，Github Pages上載即可解決";
+    console.error("潮汐載入失敗:", e);
+    list.className = "loading";
+    list.textContent = "⚠️ 潮汐載入失敗，請稍後再試";
   }
 }
 
@@ -119,9 +186,9 @@ function renderMoonTip(){
   `;
   let tipText = "";
   if(moon.name.includes("滿月")){
-    tipText = "🌕 滿月：夜晚月光足，**日間淺灘魚口一般較差，優先考慮夜釣**";
+    tipText = "🌕 滿月：夜晚月光足，<strong>日間淺灘魚口一般較差，優先考慮夜釣</strong>";
   }else if(moon.name.includes("新月")){
-    tipText = "🌚 新月：夜晚幾乎冇月光，**日間淺灘魚口會好啲，日釣首選**";
+    tipText = "🌚 新月：夜晚幾乎冇月光，<strong>日間淺灘魚口會好啲，日釣首選</strong>";
   }else{
     tipText = "ℹ️ 月相普通，魚口睇潮汐同氣壓；綠色漲潮段最值得落竿";
   }
@@ -130,10 +197,9 @@ function renderMoonTip(){
 
 // ========== 主入口 ==========
 async function main(){
+  const spot = document.getElementById("spot").value;
   renderMoonTip();
-  const spot = document.getElementById('spot').value;
-  await loadTide(spot);
-  await loadPressure();
+  await Promise.all([loadTide(spot), loadPressure()]);
 }
 
 document.getElementById("spot").onchange = main;
