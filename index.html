@@ -102,6 +102,7 @@ async function loadPressure(){
     const data = await res.json();
     const pressure = data.current && data.current.pressure_msl;
     if(typeof pressure !== "number") throw new Error("回應沒有氣壓數據");
+    box.className = "";
     box.innerHTML = `<div class="pressure-box">${getPressureTip(pressure)}</div>`;
   }catch(e){
     console.error("氣壓載入失敗:", e);
@@ -145,10 +146,12 @@ function renderTides(events, dateParts){
   title.textContent = `🌊 今日潮汐（${dateLabel}）`;
 
   if(!events.length){
+    list.className = "";
     list.innerHTML = `<div class="loading">今日暫無潮汐資料</div>`;
     return;
   }
 
+  list.className = "";
   list.innerHTML = events.map(event => {
     const isHigh = event.type === "high";
     const cls = isHigh ? "tide-row tide-in" : event.type === "low" ? "tide-row tide-out" : "tide-row tide-unknown";
